@@ -1,60 +1,49 @@
 const express = require('express');
 const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js'); // Ovo je novi "alat" za bazu
+const { createClient } = require('@supabase/supabase-js');
+
 const app = express();
-const PORT = process.env.PORT || 10000;
-
-app.use(cors());
 app.use(express.json());
+app.use(cors());
 
-// Povezivanje na Supabase pomoću varijabli koje si unio u Render
+// Povezivanje sa Supabase koristeći varijable koje si postavio na Renderu
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const API_KLJUC_ZA_KLIJENTA = process.env.MOJ_API_KLJUC;
 
-// 1. RUTA ZA METEOSTANICU - Sada sprema podatke u bazu!
-app.post('/update-meteo', async (req, res) => {
-    console.log("Podaci stigli, šaljem u Supabase arhivu...");
-    
-    // Ova linija sprema cijeli paket podataka u kolonu 'podaci'
+// Glavna ruta koja prihvaća i POST (sa stanice) i GET (preko linka)
+app.all('/podaci', async (req, res) => {
+    // Uzmi podatke ili iz tijela poruke (POST) ili iz linka (GET/Query)
+    const api_kljuc = req.body.api_kljuc || req.query.api_kljuc;
+    const podaci = req.body.podaci || req.query;
+
+    console.log("Stigao zahtjev. Provjera ključa...");
+
+    // Provjera API ključa
+    if (api_kljuc !== process.env.MOJ_API_KLJUC) {
+        console.log("Pogrešan API ključ!");
+        return res.status(403).send('Odbijeno: Pogrešan API ključ');
+    }
+
+    console.log("Ključ ispravan. Šaljem u Supabase:", podaci);
+
+    // Slanje u tablicu 'mjerenja' u stupac 'podaci'
     const { data, error } = await supabase
         .from('mjerenja')
-        .insert([{ podaci: req.body }]);
+        .insert([{ podaci: podaci }]);
 
     if (error) {
-        console.error("Greška pri spremanju:", error);
-        return res.status(500).json(error);
+        console.error("Greška pri spremanju u Supabase:", error);
+        return res.status(500).send('Greška pri spremanju: ' + error.message);
     }
-    
-    res.status(200).send("Podatak uspješno arhiviran!");
+
+    res.send('Podatak uspješno arhiviran!');
 });
 
-// 2. RUTA ZA IZVJEŠĆA - Povlači sve iz baze za tvoj Excel
-app.get('/izvjesce', async (req, res) => {
-    const klijentovKljuc = req.header('X-API-KEY');
-    if (klijentovKljuc !== API_KLJUC_ZA_KLIJENTA) return res.status(401).send("Odbijeno");
-
-    const { data, error } = await supabase
-        .from('mjerenja')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-    if (error) return res.status(500).json(error);
-    res.json(data);
+// Osnovna poruka kad se otvori početna stranica
+app.get('/', (req, res) => {
+    res.send('Meteo API server je aktivan i čeka podatke.');
 });
 
-// 3. RUTA ZA ZADNJI PODATAK (Widget)
-app.get('/podaci', async (req, res) => {
-    const klijentovKljuc = req.header('X-API-KEY');
-    if (klijentovKljuc !== API_KLJUC_ZA_KLIJENTA) return res.status(401).send("Odbijeno");
-
-    const { data, error } = await supabase
-        .from('mjerenja')
-        .select('podaci')
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-    if (error || !data.length) return res.status(404).send("Nema podataka");
-    res.json(data[0].podaci);
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+    console.log(`Sustav aktivan na portu ${PORT}`);
 });
-
-app.listen(PORT, () => console.log(`Sustav aktivan na portu ${PORT}`));

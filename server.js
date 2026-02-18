@@ -1,32 +1,33 @@
 const express = require('express');
+const cors = require('cors'); // Dodano za sigurnu vezu s web stranicom
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
-// Omogućuje serveru da čita JSON podatke koje šalje stanica
+app.use(cors()); // Omogućuje drugim aplikacijama da povuku podatke
 app.use(express.json());
 
-// Memorija za podatke (privremena, dok je server budan)
+// Memorija za podatke
 let zadnjiPodaci = { status: "Sustav online. Čekam prvo slanje sa stanice..." };
 
-// TVOJ API KLJUČ (ovaj ključ daješ drugoj aplikaciji za prikaz)
-const API_KLJUC_ZA_KLIJENTA = "moj-meteo-kljuc-2026";
+// SIGURNOST: Ključ više nije upisan ovdje, nego ga Render povlači iz skrivenih postavki
+const API_KLJUC_ZA_KLIJENTA = process.env.MOJ_API_KLJUC;
 
-// 1. RUTA ZA METEOSTANICU (Ovaj link daješ njima za POST slanje)
+// 1. RUTA ZA METEOSTANICU (POST)
 app.post('/update-meteo', (req, res) => {
-    console.log("Stigli podaci sa stanice:", req.body);
+    console.log("Stigli podaci!");
     zadnjiPodaci = {
         ...req.body,
         vrijeme_zaprimanja: new Date().toLocaleString("hr-HR")
     };
-    res.status(200).send("Podaci uspješno spremljeni");
+    res.status(200).send("OK");
 });
 
-// 2. RUTA ZA TVOJU WEB APLIKACIJU (Ovdje aplikacija povlači podatke)
+// 2. RUTA ZA PRIKAZ (GET)
 app.get('/podaci', (req, res) => {
     const klijentovKljuc = req.header('X-API-KEY');
 
     if (!klijentovKljuc || klijentovKljuc !== API_KLJUC_ZA_KLIJENTA) {
-        return res.status(401).json({ greska: "Neovlašten pristup. API ključ nije ispravan." });
+        return res.status(401).json({ greska: "Neovlašten pristup." });
     }
 
     res.json(zadnjiPodaci);

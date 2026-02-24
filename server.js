@@ -1,15 +1,15 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const cors = require('cors');
-const axios = require('axios'); // Dodano za pokupljanje JSON-a
+const axios = require('axios');
 
 const app = express();
 
 // --- POSTAVKE ---
 app.use(cors());
-app.use(express.json());
+app.use(express.json()); // Nužno za Postman Body (JSON)
 
-// Povezivanje sa Supabase
+// Povezivanje sa Supabase (Render Environment Variables)
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const mojApiKljuc = process.env.MOJ_API_KLJUC;
@@ -18,13 +18,14 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 // --- RUTE ---
 
-// 1. Početna stranica
+// 1. Provjera je li server živ
 app.get('/', (req, res) => {
-    res.send('Meteo API (Meteo-Servis) aktivan i budan!');
+    res.send('Meteo API je online i spreman za rad!');
 });
 
-// 2. Primanje podataka sa stanice (POST ili GET za testiranje)
+// 2. Slanje podataka (Postman: POST ili GET)
 app.all('/podaci', async (req, res) => {
+    // Čitamo ključ i podatke iz URL-a ili iz JSON Body-ja
     const api_kljuc = req.query.api_kljuc || req.body.api_kljuc;
     const temp = req.query.temp || req.body.temp;
     const vlaga = req.query.vlaga || req.body.vlaga;
@@ -34,22 +35,24 @@ app.all('/podaci', async (req, res) => {
     }
 
     if (!temp || !vlaga) {
-        return res.status(400).json({ success: false, message: "Nedostaju podaci (temp/vlaga)!" });
+        return res.status(400).json({ success: false, message: "Nedostaju podaci: temp i vlaga su obavezni." });
     }
 
+    // Upis u bazu s povratnom informacijom (.select())
     const { data, error } = await supabase
         .from('mjerenja')
-        .insert([{ temperatura: temp, vlaga: vlaga }]);
+        .insert([{ temperatura: temp, vlaga: vlaga }])
+        .select(); 
 
     if (error) {
         console.error("Supabase Error:", error);
-        return res.status(500).json({ success: false, message: "Greška pri upisu u bazu!" });
+        return res.status(500).json({ success: false, message: "Baza odbija upis. Provjeri RLS postavke!" });
     }
 
-    res.json({ success: true, message: "Podatak uspješno arhiviran" });
+    res.status(201).json({ success: true, message: "Podatak spremljen", data: data[0] });
 });
 
-// 3. Dohvat najnovijeg mjerenja (za Widget)
+// 3. Dohvat najnovijeg zapisa (Za Widget)
 app.get('/api/najnoviji', async (req, res) => {
     const { data, error } = await supabase
         .from('mjerenja')
@@ -59,60 +62,33 @@ app.get('/api/najnoviji', async (req, res) => {
         .single();
 
     if (error) {
-        return res.status(500).json({ success: false, message: "Ne mogu dohvatiti podatke!" });
+        return res.status(500).json({ success: false, message: "Nema podataka ili je baza nedostupna." });
     }
 
     res.json(data);
 });
 
-// 4. Dohvat zadnjih 50 mjerenja (za Povijest/Grafikon)
-app.get('/api/svi', async (req, res) => {
-    const { data, error } = await supabase
-        .from('mjerenja')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50);
-
-    if (error) {
-        return res.status(500).json({ success: false, message: "Greška pri dohvatu povijesti!" });
-    }
-
-    res.json(data);
-});
-
-// 5. 🆕 NOVA RUTA: Pokupi JSON sa vanjskog servera (POST metodom)
+// 4. Nova ruta za vanjski JSON (Sada s ispravnim rukovanjem greškama)
 app.post('/pokupi-json', async (req, res) => {
     try {
-        // Provjera API ključa
         const api_kljuc = req.headers['x-api-key'] || req.body.api_kljuc;
         if (api_kljuc !== mojApiKljuc) {
-            return res.status(403).json({ success: false, message: "Neovlašten pristup" });
+            return res.status(403).json({ success: false, message: "Neovlašten pristup (Krivi API ključ)" });
         }
 
-        // URL servera koji generira JSON
-        const izvorniUrl = "https://tvoj-meteo-server.com/api/data";
+        // PAŽNJA: Ovo mora biti stvarni URL. Za test u Postmanu koristimo tvoj vlastiti najnoviji podatak
+        const izvorniUrl = req.body.url_za_pokupljanje || `https://${req.get('host')}/api/najnoviji`;
 
-        // Podaci koje šalješ POST metodom (ako su potrebni)
-        const podaciZaSlanje = req.body || {};
+        const response = await axios.get(izvorniUrl); // Koristimo GET jer većina API-ja tako daje podatke
 
-        // Pokupi JSON sa izvornog servera
-        const response = await axios.post(izvorniUrl, podaciZaSlanje, {
-            headers: {
-                'Content-Type': 'application/json',
-                // Dodaj druge headers ako su potrebni
-            }
-        });
-
-        // Vrati odgovor klijentu
         res.json({
             success: true,
-            data: response.data,
-            message: "JSON uspješno pokupljen"
+            izvor: izvorniUrl,
+            data: response.data
         });
 
     } catch (error) {
-        console.error("Greška pri pokupljanju JSON-a:", error.message);
-        res.status(500).json({ success: false, message: "Greška pri pokupljanju podataka" });
+        res.status(500).json({ success: false, message: "Greška: " + error.message });
     }
 });
 

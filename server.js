@@ -5,6 +5,7 @@ const axios = require('axios');
 
 const app = express();
 
+// --- KONFIGURACIJA ---
 app.use(cors());
 app.use(express.json());
 
@@ -16,58 +17,69 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 // --- RUTE ---
 
-app.get('/', (req, res) => res.send('Univerzalni Meteo API aktivan!'));
+app.get('/', (req, res) => {
+    res.send('Profesionalni Univerzalni Meteo API je online!');
+});
 
-// 1. DINAMIČKO POKUPLJANJE: Uzima sve iz JSON-a i sprema
+// GLAVNA RUTA ZA POKUPLJANJE SVEGA (JSON Fetch & Store)
 app.all('/pokupi-json', async (req, res) => {
     try {
+        // 1. Provjera ovlasti
         const api_kljuc = req.headers['x-api-key'] || req.query.api_kljuc || req.body.api_kljuc;
-        if (api_kljuc !== mojApiKljuc) return res.status(403).json({ success: false, message: "Neovlašteno" });
+        if (api_kljuc !== mojApiKljuc) {
+            return res.status(403).json({ success: false, message: "Neovlašten pristup" });
+        }
 
-        const vanjskiUrl = req.query.url || req.body.url; 
-        if (!vanjskiUrl) return res.status(400).json({ success: false, message: "Nedostaje URL izvora" });
+        // 2. URL s kojeg uzimamo podatke
+        const izvorniUrl = req.query.url || req.body.url;
+        if (!izvorniUrl) {
+            return res.status(400).json({ success: false, message: "Nedostaje URL izvora podataka" });
+        }
 
-        // 1. Dohvati vanjski JSON
-        const response = await axios.get(vanjskiUrl);
-        const podaciIzIzvora = response.data; // Ovdje su svi parametri (tlak, vjetar, lux, itd.)
+        // 3. Dohvaćanje kompletnog JSON-a
+        const response = await axios.get(izvorniUrl);
+        const kompletniPodaci = response.data; // Ovdje je SVE što JSON sadrži
 
-        // 2. SPREMANJE SVEGA U BAZU
-        // Supabase će automatski mapirati ključeve iz JSON-a u stupce tablice
+        // 4. AUTOMATSKO SPREMANJE CIJELOG OBJEKTA U BAZU
+        // Supabase će automatski upisati podatke u stupce koji se zovu isto kao polja u JSON-u
         const { data, error } = await supabase
             .from('mjerenja')
-            .insert([podaciIzIzvora]) // Šaljemo cijeli objekt bazi
+            .insert([kompletniPodaci]) 
             .select();
 
         if (error) {
-            console.error("Greška baze:", error);
+            console.error("Greška baze:", error.message);
             return res.status(500).json({ 
                 success: false, 
-                message: "Baza ne podržava sve poslane parametre. Provjeri imena stupaca!",
+                message: "Baza ne može prihvatiti podatke. Provjeri jesu li stupci kreirani u Supabaseu!",
                 detalji: error.message 
             });
         }
 
-        res.json({ success: true, poruka: "Svi parametri arhivirani", spremljeno: data[0] });
+        res.json({
+            success: true,
+            message: "Svi parametri su uspješno arhivirani",
+            spremljeni_podaci: data[0]
+        });
 
     } catch (err) {
-        res.status(500).json({ success: false, greška: err.message });
+        console.error("Greška sustava:", err.message);
+        res.status(500).json({ success: false, message: err.message });
     }
 });
 
-// 2. RUČNI UPIS SVIH PARAMETARA (preko Body-ja)
-app.post('/podaci', async (req, res) => {
-    const { api_kljuc, ...ostaliPodaci } = req.body;
-
-    if (api_kljuc !== mojApiKljuc) return res.status(401).json({ success: false, message: "Krivi ključ" });
-
+// RUTA ZA DOHVAT (Widget)
+app.get('/api/najnoviji', async (req, res) => {
     const { data, error } = await supabase
         .from('mjerenja')
-        .insert([ostaliPodaci])
-        .select();
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
 
-    if (error) return res.status(500).json({ success: false, error: error.message });
-    res.json({ success: true, data: data[0] });
+    if (error) return res.status(500).json({ success: false, message: "Nema podataka." });
+    res.json(data);
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Server radi na ${PORT}`));
+app.listen(PORT, () => console.log(`Univerzalni API radi na ${PORT}`));

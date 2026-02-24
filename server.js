@@ -1,71 +1,74 @@
 const express = require('express');
-const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
+const cors = require('cors'); // Dodano za rješavanje problema pristupa s web stranice
 
 const app = express();
 
-// --- MIDDLEWARE ---
+// --- POSTAVKE ---
+// Omogućujemo CORS kako bi tvoj widget ili bilo koja web stranica mogla dohvatiti JSON podatke
+app.use(cors()); 
 app.use(express.json());
-app.use(cors());
 
-// Jednostavan logging middleware (vidiš svaki zahtjev u logovima)
-app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-    next();
-});
+// Povezivanje sa Supabase bazom preko Environment Variables (Postavljeno na Renderu)
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
+const mojApiKljuc = process.env.MOJ_API_KLJUC;
 
-// Povezivanje sa Supabase
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // --- RUTE ---
 
-// 1. Primanje podataka (sa stanice ili linka)
-app.all('/podaci', async (req, res) => {
-    const api_kljuc = req.body.api_kljuc || req.query.api_kljuc;
-    const podaci = req.body.podaci || { ...req.query };
-    
-    // Čistimo api_kljuc iz samih podataka da ne ide u bazu
-    delete podaci.api_kljuc;
-
-    // Validacija
-    if (api_kljuc !== process.env.MOJ_API_KLJUC) {
-        return res.status(403).json({ success: false, message: 'Neovlašten pristup' });
-    }
-
-    if (Object.keys(podaci).length === 0) {
-        return res.status(400).json({ success: false, message: 'Nema podataka za spremanje' });
-    }
-
-    // Dodajemo timestamp ručno za svaki slučaj
-    const paketZaSpremanje = {
-        podaci: podaci,
-        created_at: new Date().toISOString()
-    };
-
-    const { error } = await supabase
-        .from('mjerenja')
-        .insert([paketZaSpremanje]);
-
-    if (error) {
-        return res.status(500).json({ success: false, error: error.message });
-    }
-
-    res.json({ success: true, message: 'Podatak uspješno arhiviran' });
+// 1. Početna stranica (za Cron-job da drži server budnim)
+app.get('/', (req, res) => {
+    res.send('Meteo API (Meteo-Servis) aktivan i budan!');
 });
 
-// 2. Endpoint za widget (Vraća samo zadnje mjerenje)
+// 2. Primanje podataka sa stanice (POST ili GET za testiranje)
+app.all('/podaci', async (req, res) => {
+    // Uzimamo podatke iz URL-a (query) ili tijela zahtjeva (body)
+    const api_kljuc = req.query.api_kljuc || req.body.api_kljuc;
+    const temp = req.query.temp || req.body.temp;
+    const vlaga = req.query.vlaga || req.body.vlaga;
+
+    // Provjera API ključa
+    if (api_kljuc !== mojApiKljuc) {
+        return res.status(401).json({ success: false, message: "Neispravan API ključ!" });
+    }
+
+    if (!temp || !vlaga) {
+        return res.status(400).json({ success: false, message: "Nedostaju podaci (temp/vlaga)!" });
+    }
+
+    // Upis u Supabase tablicu 'mjerenja'
+    const { data, error } = await supabase
+        .from('mjerenja')
+        .insert([{ temperatura: temp, vlaga: vlaga }]);
+
+    if (error) {
+        console.error("Supabase Error:", error);
+        return res.status(500).json({ success: false, message: "Greška pri upisu u bazu!" });
+    }
+
+    res.json({ success: true, message: "Podatak uspješno arhiviran" });
+});
+
+// 3. Dohvat najnovijeg mjerenja (za Widget)
 app.get('/api/najnoviji', async (req, res) => {
     const { data, error } = await supabase
         .from('mjerenja')
         .select('*')
         .order('created_at', { ascending: false })
-        .limit(1);
+        .limit(1)
+        .single();
 
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data[0] || { message: "Nema podataka" });
+    if (error) {
+        return res.status(500).json({ success: false, message: "Ne mogu dohvatiti podatke!" });
+    }
+
+    res.json(data);
 });
 
-// 3. Endpoint za povijest (Vraća zadnjih 50 mjerenja)
+// 4. Dohvat zadnjih 50 mjerenja (za Povijest/Grafikon)
 app.get('/api/svi', async (req, res) => {
     const { data, error } = await supabase
         .from('mjerenja')
@@ -73,22 +76,15 @@ app.get('/api/svi', async (req, res) => {
         .order('created_at', { ascending: false })
         .limit(50);
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+        return res.status(500).json({ success: false, message: "Greška pri dohvatu povijesti!" });
+    }
+
     res.json(data);
 });
 
-// Početna stranica
-app.get('/', (req, res) => {
-    res.json({ status: "Online", projekt: "Meteo Arhiva API" });
-});
-
-// --- ERROR HANDLING ---
-app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).json({ success: false, message: 'Interna greška servera' });
-});
-
+// --- POKRETANJE ---
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`Meteo API aktivan na portu ${PORT}`);
+    console.log(`Server radi na portu ${PORT}`);
 });

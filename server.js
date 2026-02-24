@@ -90,7 +90,7 @@ app.post('/pokupi-json', async (req, res) => {
         }
 
         // URL servera koji generira JSON
-        const izvorniUrl = "https://izvorni-server.com/generiraj-json";
+        const izvorniUrl = "https://tvoj-meteo-server.com/api/data";
 
         // Podaci koje šalješ POST metodom (ako su potrebni)
         const podaciZaSlanje = req.body || {};

@@ -6,65 +6,58 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY;
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const mojApiKljuc = "moj-meteo-kljuc-2026";
 
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-// --- GLOBALNA VARIJABLA ZA PRIKAZ UŽIVO ---
-// Ovo služi da widget dobije podatke bez da svaki put mora "kopati" po arhivi (bazi)
+// Globalna varijabla za widget (Prikaz uživo)
 let zadnjeMjerenje = {
     temperatura: "--",
     vlaga: "--",
     co2: "--",
     tlak: "--",
-    vrijeme: "Čekam podatke..."
+    vrijeme: "Čekam stanicu..."
 };
 
-// 1. RUTA ZA PRIMANJE PODATAKA (Od stanice do servera)
+// RUTA ZA STANICU (Slanje podataka)
 app.post('/podaci', async (req, res) => {
-    const podaci = req.body;
+    const paket = req.body;
 
-    if (podaci.api_kljuc !== mojApiKljuc) {
-        return res.status(401).json({ success: false, message: "Neispravan ključ!" });
+    if (paket.api_kljuc !== mojApiKljuc) {
+        return res.status(401).json({ success: false, message: "Neovlašten pristup" });
     }
 
-    // AŽURIRANJE ZA PRIKAZ UŽIVO (Odmah ide u memoriju servera)
+    // Izvlačenje podataka iz formata koji šalješ (vidi se na tvojoj slici)
+    const noveVrijednosti = {
+        temperatura: paket.air_temperature,
+        vlaga: paket.air_humidity,
+        co2: paket.co2_concentration,
+        tlak: paket.barometric_pressure
+    };
+
+    // 1. Ažuriraj memoriju za Widget (Odmah)
     zadnjeMjerenje = {
-        temperatura: podaci.air_temperature,
-        vlaga: podaci.air_humidity,
-        co2: podaci.co2_concentration,
-        tlak: podaci.barometric_pressure,
+        ...noveVrijednosti,
         vrijeme: new Date().toLocaleString('hr-HR')
     };
 
-    // ARHIVIRANJE U BAZU (Samo za izvješća)
-    const { error } = await supabase
-        .from('mjerenja')
-        .insert([{
-            temperatura: podaci.air_temperature,
-            vlaga: podaci.air_humidity,
-            co2: podaci.co2_concentration,
-            tlak: podaci.barometric_pressure
-        }]);
+    // 2. Spremi u bazu (Arhiva/Izvješća)
+    const { error } = await supabase.from('mjerenja').insert([noveVrijednosti]);
 
-    if (error) console.error("Arhiviranje nije uspjelo:", error);
-
-    res.json({ success: true, message: "Podaci primljeni i proslijeđeni!" });
-});
-
-// 2. RUTA ZA WIDGET (Brzo čitanje iz memorije servera)
-app.get('/api/najnoviji', (req, res) => {
-    const zahtijevaniKljuc = req.query.api_kljuc;
-
-    if (zahtijevaniKljuc !== mojApiKljuc) {
-        return res.status(401).json({ success: false, message: "Ključ obavezan!" });
+    if (error) {
+        console.error("Baza greška:", error.message);
+        return res.status(500).json({ success: false, error: error.message });
     }
 
-    // Server ovdje ne ide u bazu, nego odmah vraća ono što ima u memoriji
+    res.json({ success: true, message: "Podaci primljeni i arhivirani!" });
+});
+
+// RUTA ZA WIDGET (Čitanje podataka)
+app.get('/api/najnoviji', (req, res) => {
+    if (req.query.api_kljuc !== mojApiKljuc) {
+        return res.status(401).json({ success: false, message: "Neispravan ključ" });
+    }
     res.json(zadnjeMjerenje);
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Meteo servis na portu ${PORT}`));
+app.listen(PORT, () => console.log(`Server aktivan na ${PORT}`));
